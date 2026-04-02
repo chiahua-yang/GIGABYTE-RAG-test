@@ -13,6 +13,10 @@ from bs4 import BeautifulSoup
 
 SPEC_URL = "https://www.gigabyte.com/tw/Laptop/AORUS-MASTER-16-AM6H/sp"
 
+# JS-rendered page detection: if these keywords are missing from static HTML,
+# fall back to playwright.
+_JS_CHECK_KEYWORDS = ["RTX", "Ryzen", "DDR5"]
+
 # Map sub-model suffix → full name
 SKU_MAP = {
     "BZH": "AORUS MASTER 16 AM6H-BZH",
@@ -51,6 +55,11 @@ def _normalize_whitespace(text: str) -> str:
 
 
 def fetch_html(url: str) -> str:
+    """
+    Fetch page HTML.
+    First tries requests (fast). If the page appears JS-rendered
+    (spec keywords not present in static HTML), falls back to playwright.
+    """
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (X11; Linux x86_64) "
@@ -60,7 +69,40 @@ def fetch_html(url: str) -> str:
     }
     resp = requests.get(url, headers=headers, timeout=30)
     resp.raise_for_status()
-    return resp.text
+    html = resp.text
+
+    # Check if the page rendered any spec content
+    if any(kw in html for kw in _JS_CHECK_KEYWORDS):
+        return html
+
+    print("Static HTML missing spec content — falling back to playwright ...", file=sys.stderr)
+    return _fetch_html_playwright(url)
+
+
+def _fetch_html_playwright(url: str) -> str:
+    """Render JS-heavy page with headless Chromium."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise RuntimeError(
+            "Page appears JS-rendered but playwright is not installed.\n"
+            "Install with:  uv add playwright && uv run playwright install chromium"
+        )
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(url, wait_until="networkidle", timeout=60_000)
+        # Wait for spec content to appear
+        for selector in [".spec-list", ".spec-detail", "table"]:
+            try:
+                page.wait_for_selector(selector, timeout=10_000)
+                break
+            except Exception:
+                pass
+        html = page.content()
+        browser.close()
+    return html
 
 
 def parse_specs(html: str) -> list[dict]:
