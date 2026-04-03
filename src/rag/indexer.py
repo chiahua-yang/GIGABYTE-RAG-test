@@ -88,6 +88,11 @@ class BM25:
         return result
 
 
+# Ensure pickle records the canonical module path regardless of how this
+# file is executed (e.g. `python -m src.rag.indexer` sets __name__=="__main__")
+BM25.__module__ = "src.rag.indexer"
+
+
 # ---------------------------------------------------------------------------
 # Index build / load
 # ---------------------------------------------------------------------------
