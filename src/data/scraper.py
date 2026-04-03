@@ -253,10 +253,45 @@ def save_specs(records: list[dict], out_path: Path):
     print(f"Saved {len(records)} records → {out_path}")
 
 
+LOCAL_HTML_PATH = Path("data/spec_page.html")
+
+
+def load_or_fetch_html() -> str:
+    """
+    Load HTML from a local file if present, otherwise fetch from the URL.
+
+    Local file takes priority so that:
+    - Cloud environments (Colab) blocked by 403 can still work
+    - The user can save the page from their browser and upload it
+
+    To use a local file:
+      1. Open https://www.gigabyte.com/tw/Laptop/AORUS-MASTER-16-AM6H/sp in a browser
+      2. Wait for the page to fully load (specs visible)
+      3. Ctrl+S → save as "Webpage, HTML Only" (.html)
+      4. Place / upload the file at  data/spec_page.html
+    """
+    if LOCAL_HTML_PATH.exists():
+        print(f"Loading local HTML: {LOCAL_HTML_PATH}")
+        return LOCAL_HTML_PATH.read_text(encoding="utf-8", errors="replace")
+
+    print(f"Fetching {SPEC_URL} ...")
+    try:
+        return fetch_html(SPEC_URL)
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to fetch {SPEC_URL}: {e}\n\n"
+            "If you are on a cloud environment (e.g. Colab), the IP may be blocked.\n"
+            "Solution:\n"
+            "  1. Open the URL in your browser\n"
+            "  2. Wait for specs to load, then Ctrl+S → save as HTML only\n"
+            f"  3. Upload the file to: {LOCAL_HTML_PATH}\n"
+            "  4. Re-run this script"
+        ) from e
+
+
 def main():
     out_path = Path("data/specs.json")
-    print(f"Fetching {SPEC_URL} ...")
-    html = fetch_html(SPEC_URL)
+    html = load_or_fetch_html()
     records = parse_specs(html)
 
     if not records:
@@ -264,7 +299,6 @@ def main():
         sys.exit(1)
 
     save_specs(records, out_path)
-    # Print sample
     for r in records[:3]:
         print(r)
 
