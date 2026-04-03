@@ -14,6 +14,7 @@ Retrieval : Hybrid BM25 + embedding cosine similarity
 import json
 import math
 import pickle
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -39,12 +40,16 @@ def _tokenize(text: str) -> list[str]:
     """
     Simple tokenizer for zh/en mixed text.
     - Splits on whitespace for English words
+    - Pulls out embedded Latin/alnum runs (e.g. "CPU" in 這台筆電的CPU是什麼？)
     - Extracts individual CJK characters
-    - Lowercases everything
     """
+    lowered = text.lower()
     tokens: list[str] = []
-    for word in text.lower().split():
-        tokens.append(word)
+    for word in lowered.split():
+        if word:
+            tokens.append(word)
+    for m in re.finditer(r"[a-z0-9]{2,}", lowered):
+        tokens.append(m.group(0))
     for char in text:
         if "\u4e00" <= char <= "\u9fff":   # CJK Unified Ideographs
             tokens.append(char)

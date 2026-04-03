@@ -35,6 +35,41 @@ uv run index
 uv run serve
 ```
 
+### 面試官機器（推薦 Demo 流程：本地 HTML，不依賴即時爬網）
+
+你的資料來源若是先在瀏覽器另存官方頁面，此流程最穩定：
+
+1. 在瀏覽器打開產品頁，等待規格完整載入後另存為 HTML  
+2. 將檔案放到 `data/spec_page.html`
+3. 依序執行：
+
+```bash
+uv sync
+uv run scrape
+uv run index
+uv run serve
+```
+
+> `uv run scrape` 會優先讀取 `data/spec_page.html`；若不存在才會改用線上抓取。  
+> 這樣可避免公司網路、地區封鎖或反爬機制造成 demo 失敗。
+
+### Windows PowerShell 指令（面試最實用）
+
+```powershell
+# 1) 安裝依賴
+uv sync
+
+# 2) 將你準備好的 HTML 複製到固定位置
+Copy-Item ".\your_saved_page.html" ".\data\spec_page.html" -Force
+
+# 3) 建立資料與索引
+uv run scrape
+uv run index
+
+# 4) 啟動互動問答（含 streaming 與 TTFT/TPS）
+uv run serve
+```
+
 ### 執行評測
 
 ```bash
@@ -128,6 +163,16 @@ Embedding Model (CPU)                  ≈ 93 MB RAM
 
 > 執行 `uv run eval` 後將結果填入此表。
 
+### 可重現評測流程（建議在面試前先跑完一次）
+
+```bash
+uv run eval --top-k 3 --max-tokens 256 --output data/benchmark_results.json
+```
+
+面試時可直接展示：
+- `data/benchmark_results.json`（完整每題結果）
+- README 的定量表格（平均 TTFT / TPS / Recall）
+
 ### 測試題目設計
 
 共 20 題，分三個難度層次：
@@ -142,6 +187,26 @@ Embedding Model (CPU)                  ≈ 93 MB RAM
 - **Retrieval Recall@k**：正確 chunk 是否出現在 top-k 結果中
 - **Keyword Hit Rate**：回答中包含預期關鍵字的比例（自動計算）
 - **TTFT / TPS**：每題皆記錄，取平均值
+
+### 你可自行設計題目與預期答案（建議格式）
+
+建議每題都寫成以下欄位，方便主管快速理解可驗證性：
+
+- `question`：問題（可中英混合）
+- `expected_keywords`：預期答案關鍵字（2-4 個）
+- `expected_category`：預期命中的規格類別（CPU/GPU/Display...）
+- `expected_model`：若是型號題則填 BZH/BYH/BXH，否則留空
+
+範例：
+
+```json
+{
+  "question": "AM6H-BZH 的顯卡與 VRAM 是什麼？",
+  "expected_keywords": ["RTX 5090", "24GB", "GDDR7"],
+  "expected_category": "GPU",
+  "expected_model": "AORUS MASTER 16 AM6H-BZH"
+}
+```
 
 ---
 

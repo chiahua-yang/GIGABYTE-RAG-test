@@ -25,7 +25,9 @@ DEFAULT_MODEL_PATH = Path("models") / DEFAULT_MODEL_FILE
 
 SYSTEM_PROMPT = """你是 GIGABYTE AORUS MASTER 16 AM6H 的產品規格專家助手。
 請根據提供的規格資料，用繁體中文或英文（依使用者提問語言）簡潔、精確地回答。
-若規格資料中沒有相關資訊，請直接說明無法確認，不要猜測。"""
+若規格資料中沒有相關資訊，請直接說明無法確認，不要猜測。
+若問題涉及多個型號（BZH/BYH/BXH 等），請逐型號分開描述；不可將某一型號的數值推廣到「所有型號」，
+除非資料中每個型號的該欄位文字完全一致。功率（W）、頻率（MHz）等請務必對應到正確型號段落。"""
 
 
 def download_model(

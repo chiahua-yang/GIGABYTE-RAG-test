@@ -63,8 +63,15 @@ def load_specs(path: Path) -> list[dict]:
 
 
 def _slug(text: str) -> str:
-    cleaned = re.sub(r"[^a-z0-9]+", "-", text.lower())
-    return cleaned.strip("-") or "field"
+    """
+    Stable id fragment from spec key. Pure CJK keys used to collapse to "field",
+    causing duplicate chunk ids and hurting retrieval — fall back to a short hash.
+    """
+    cleaned = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    if cleaned:
+        return cleaned[:64]
+    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
+    return f"k{digest}"
 
 
 def _source_signature(records: list[dict]) -> str:
