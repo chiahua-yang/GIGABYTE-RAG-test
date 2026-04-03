@@ -30,7 +30,7 @@
 1. 開啟 [Google Colab](https://colab.research.google.com/)，點 **Open notebook**（開啟筆記本）。
 2. 在跳出視窗左側選 **GitHub**，搜尋欄貼上 `https://github.com/chiahua-yang/GIGABYTE-RAG-test.git`，按搜尋（放大鏡圖示），在結果中點選 **`colab_demo.ipynb`** 開啟。
 3. 開啟後，到 **Runtime → Change runtime type** 選 **T4 GPU**（與 `colab_demo.ipynb` 開頭說明一致）。  
-   > 從 GitHub 開啟的是筆記本檔本身；完整程式與資料仍由筆記本 **Section A2** 的 `git clone` 拉到 `/content/GIGABYTE-RAG-test`（分支與 `REPO_URL`／`BRANCH` 請與該格設定一致）。若列表裡看不到預期檔案或版本不對，在 Colab 的 GitHub 檔案介面確認分支是否為 `claude/build-rag-product-qa-2nMZM`。
+   > 從 GitHub 開啟的是筆記本檔本身；完整程式與資料仍由筆記本 **Section A2** 的 `git clone` 拉到 `/content/GIGABYTE-RAG-test`（分支與 `REPO_URL`／`BRANCH` 請與該格設定一致）。若列表裡看不到預期檔案或版本不對，在 Colab 的 GitHub 檔案介面確認分支是否為 **`main`**（須與筆記本 A2 的 `BRANCH` 一致）。
 4. 依 `colab_demo.ipynb` 由上而下執行（或 **Runtime → Run all**；仍建議在 **Section A 結束後手動 Restart** 再續跑，見下項）：
    - **第一次使用**：Section A（安裝）→ **務必 Runtime → Restart session** → Section B（重啟後初始化）→ Section C 起。
    - **Section C1**：依提示用 `files.upload()` 上傳剛才存好的 `.html`，會寫入 `data/spec_page.html`（若該檔已存在會跳過上傳）。
