@@ -34,6 +34,26 @@ GROUP_ORDER = [
     "General",
 ]
 
+# Bilingual category labels — improves retrieval for both zh/en queries
+CATEGORY_LABEL = {
+    "CPU":          "CPU / 中央處理器",
+    "OS":           "OS / 作業系統",
+    "Memory":       "Memory / 記憶體 RAM",
+    "Storage":      "Storage / 儲存裝置 SSD",
+    "Display":      "Display / 顯示器 螢幕",
+    "GPU":          "GPU / 顯示晶片 顯卡",
+    "Camera":       "Camera / 視訊鏡頭 攝影機",
+    "Connectivity": "Connectivity / 通訊 WiFi 藍牙",
+    "Audio":        "Audio / 音效 喇叭",
+    "Input":        "Input / 鍵盤 輸入",
+    "Ports":        "Ports / 連接埠 介面 USB",
+    "Power":        "Power / 電源 電池 變壓器",
+    "Dimensions":   "Dimensions / 尺寸 重量 規格",
+    "Security":     "Security / 安全",
+    "Accessories":  "Accessories / 配件",
+    "General":      "General / 其他",
+}
+
 
 def load_specs(path: Path) -> list[dict]:
     with open(path, encoding="utf-8") as f:
@@ -64,7 +84,8 @@ def build_chunks(records: list[dict]) -> list[dict]:
             if category not in cat_map:
                 continue
             pairs = cat_map[category]
-            text = f"[{model}] {category}\n"
+            label = CATEGORY_LABEL.get(category, category)
+            text = f"[{model}] {label}\n"
             text += "\n".join(f"  {k}: {v}" for k, v in pairs)
             chunks.append(
                 {
@@ -90,7 +111,8 @@ def build_chunks(records: list[dict]) -> list[dict]:
         if all_same:
             continue  # No need to compare identical specs
 
-        text = f"[型號比較] {category}\n"
+        label = CATEGORY_LABEL.get(category, category)
+        text = f"[型號比較] {label}\n"
         for m in models_with_cat:
             pairs = grouped[m][category]
             text += f"\n  {m}:\n"

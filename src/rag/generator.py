@@ -106,24 +106,24 @@ def stream_generate(
     for chunk in stream:
         delta = chunk["choices"][0]["delta"]
         text = delta.get("content", "")
-        if not text:
-            continue
-
-        now = time.perf_counter()
-        if ttft is None:
-            ttft = now - t_start
-            t_first_token = now
-
-        token_count += 1
         finish_reason = chunk["choices"][0].get("finish_reason")
+        now = time.perf_counter()
 
-        if finish_reason is not None:
-            elapsed = now - t_first_token if t_first_token else 1e-9
+        if text:
+            if ttft is None:
+                ttft = now - t_start
+                t_first_token = now
+            token_count += 1
+
+        # Build metrics when the stream signals completion
+        if finish_reason is not None and token_count > 0:
+            elapsed = (now - t_first_token) if t_first_token else 1e-9
             tps = token_count / elapsed if elapsed > 0 else 0
-            yield text, {
-                "ttft": round(ttft, 4),
+            metrics = {
+                "ttft": round(ttft or 0, 4),
                 "tps": round(tps, 2),
                 "total_tokens": token_count,
             }
-        else:
+            yield text, metrics  # text may be empty on final chunk — that's fine
+        elif text:
             yield text, None
