@@ -128,9 +128,17 @@ def save_index(index: dict, path: Path):
     print(f"Index saved → {path}  ({len(index['chunks'])} chunks)")
 
 
+class _FixedUnpickler(pickle.Unpickler):
+    """Redirect BM25 class regardless of which module pickle recorded it under."""
+    def find_class(self, module, name):
+        if name == "BM25":
+            return BM25
+        return super().find_class(module, name)
+
+
 def load_index(path: Path = INDEX_PATH) -> dict:
     with open(path, "rb") as f:
-        return pickle.load(f)
+        return _FixedUnpickler(f).load()
 
 
 # ---------------------------------------------------------------------------
