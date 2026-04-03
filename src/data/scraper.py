@@ -1,6 +1,19 @@
 """
 Scrape and parse GIGABYTE AORUS MASTER 16 AM6H spec page.
 Produces data/specs.json — a list of {model, category, key, value} records.
+
+Parsing strategy
+----------------
+The page is a Nuxt.js SSR app.  The spec data for all three sub-models
+(BZH / BYH / BXH) is embedded as a deduped JSON array inside a <script>
+tag.  We parse that JSON directly instead of scraping HTML elements,
+because:
+  - The rendered HTML only shows ONE model's specs (the active tab).
+  - The embedded JSON contains ALL three models' complete spec data.
+  - JSON parsing is more robust than HTML selector-based parsing.
+
+Fallback: if the JSON cannot be found/parsed, fall back to the
+<ul class="spec-item-list"> HTML structure (which covers the active model).
 """
 
 import json
@@ -12,20 +25,18 @@ import requests
 from bs4 import BeautifulSoup
 
 SPEC_URL = "https://www.gigabyte.com/tw/Laptop/AORUS-MASTER-16-AM6H/sp"
+LOCAL_HTML_PATH = Path("data/spec_page.html")
 
-# JS-rendered page detection: if these keywords are missing from static HTML,
-# fall back to playwright.
-_JS_CHECK_KEYWORDS = ["RTX", "Ryzen", "DDR5"]
+# Actual model title strings as they appear in the page JSON
+MODEL_TITLES = [
+    "AORUS MASTER 16 BZH",
+    "AORUS MASTER 16 BYH",
+    "AORUS MASTER 16 BXH",
+]
 
-# Map sub-model suffix → full name
-SKU_MAP = {
-    "BZH": "AORUS MASTER 16 AM6H-BZH",
-    "BYH": "AORUS MASTER 16 AM6H-BYH",
-    "BXH": "AORUS MASTER 16 AM6H-BXH",
-}
-
-# Semantic group mapping (Traditional Chinese category names on the page)
+# Map Chinese spec key substrings → semantic group names
 CATEGORY_GROUPS = {
+    "中央處理器": "CPU",
     "處理器": "CPU",
     "晶片組": "CPU",
     "作業系統": "OS",
@@ -33,217 +44,231 @@ CATEGORY_GROUPS = {
     "儲存裝置": "Storage",
     "顯示器": "Display",
     "顯示晶片": "GPU",
+    "視訊鏡頭": "Camera",
     "攝影機": "Camera",
+    "通訊": "Connectivity",
     "網路": "Connectivity",
     "音效": "Audio",
     "鍵盤": "Input",
     "觸控板": "Input",
-    "電源": "Power",
     "電池": "Power",
-    "規格": "Dimensions",
+    "變壓器": "Power",
+    "電源": "Power",
     "尺寸": "Dimensions",
     "重量": "Dimensions",
-    "介面": "Ports",
+    "規格": "Dimensions",
+    "顏色": "General",
     "連接埠": "Ports",
-    "安全性": "Security",
-    "隨附配件": "Accessories",
+    "介面": "Ports",
+    "安全": "Security",
+    "隨附": "Accessories",
 }
 
 
-def _normalize_whitespace(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip()
+# ---------------------------------------------------------------------------
+# HTML loading
+# ---------------------------------------------------------------------------
 
+def load_or_fetch_html() -> str:
+    """
+    Load HTML from data/spec_page.html (preferred) or fetch from URL.
 
-def fetch_html(url: str) -> str:
+    Colab / cloud IPs are blocked (403) by GIGABYTE.
+    Workaround: save the page from your browser and upload it.
+      1. Open https://www.gigabyte.com/tw/Laptop/AORUS-MASTER-16-AM6H/sp
+      2. Wait for specs to fully load
+      3. Ctrl+S → "Webpage, HTML Only"
+      4. Upload to data/spec_page.html
     """
-    Fetch page HTML.
-    First tries requests (fast). If the page appears JS-rendered
-    (spec keywords not present in static HTML), falls back to playwright.
-    """
+    if LOCAL_HTML_PATH.exists():
+        print(f"Loading local HTML: {LOCAL_HTML_PATH}")
+        return LOCAL_HTML_PATH.read_text(encoding="utf-8", errors="replace")
+
+    print(f"Fetching {SPEC_URL} ...")
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (X11; Linux x86_64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/124.0 Safari/537.36"
-        )
+        ),
+        "Accept-Language": "zh-TW,zh;q=0.9,en;q=0.8",
     }
-    resp = requests.get(url, headers=headers, timeout=30)
-    resp.raise_for_status()
-    html = resp.text
-
-    # Check if the page rendered any spec content
-    if any(kw in html for kw in _JS_CHECK_KEYWORDS):
-        return html
-
-    print("Static HTML missing spec content — falling back to playwright ...", file=sys.stderr)
-    return _fetch_html_playwright(url)
-
-
-def _fetch_html_playwright(url: str) -> str:
-    """Render JS-heavy page with headless Chromium."""
     try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
+        resp = requests.get(SPEC_URL, headers=headers, timeout=30)
+        resp.raise_for_status()
+        return resp.text
+    except Exception as e:
         raise RuntimeError(
-            "Page appears JS-rendered but playwright is not installed.\n"
-            "Install with:  uv add playwright && uv run playwright install chromium"
-        )
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto(url, wait_until="networkidle", timeout=60_000)
-        # Wait for spec content to appear
-        for selector in [".spec-list", ".spec-detail", "table"]:
-            try:
-                page.wait_for_selector(selector, timeout=10_000)
-                break
-            except Exception:
-                pass
-        html = page.content()
-        browser.close()
-    return html
+            f"Failed to fetch page: {e}\n"
+            "If running on Colab, the IP is likely blocked (403).\n"
+            "Save the page from your browser and place it at data/spec_page.html"
+        ) from e
 
 
-def parse_specs(html: str) -> list[dict]:
+# ---------------------------------------------------------------------------
+# Primary parser: Nuxt SSR deduped JSON
+# ---------------------------------------------------------------------------
+
+def _resolve(data: list, idx):
     """
-    Parse the GIGABYTE spec page HTML.
+    Recursively resolve a value in Nuxt's deduped JSON array.
 
-    The page renders specs inside elements like:
-      <div class="spec-detail-container" data-sku="BZH">
-        ...
-        <ul class="spec-list">
-          <li class="spec-item">
-            <span class="spec-key">...</span>
-            <span class="spec-value">...</span>
-          </li>
-        </ul>
-    Falls back to a generic table/list traversal when selectors differ.
+    In Nuxt SSR format the entire state is serialised as a flat array.
+    Objects and arrays store integer indices instead of inline values;
+    an integer N means "look up data[N]".  Strings, booleans and None
+    are stored as-is.
+    """
+    if isinstance(idx, int) and 0 <= idx < len(data):
+        val = data[idx]
+        if isinstance(val, dict):
+            return {k: _resolve(data, v) for k, v in val.items()}
+        if isinstance(val, list):
+            return [_resolve(data, v) for v in val]
+        return val
+    return idx
+
+
+def _html_to_text(html_str: str) -> str:
+    """Strip HTML tags and normalise whitespace."""
+    text = re.sub(r"<[^>]+>", " ", html_str)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _map_category(key: str) -> str:
+    for kw, group in CATEGORY_GROUPS.items():
+        if kw in key:
+            return group
+    return "General"
+
+
+def parse_specs_from_json(html: str) -> list[dict]:
+    """
+    Extract specs from the Nuxt SSR deduped JSON blob embedded in <script>.
+
+    Returns a list of {model, category, key, value} records for all 3 models,
+    or [] if the JSON blob cannot be found or parsed.
+    """
+    soup = BeautifulSoup(html, "lxml")
+
+    for script in soup.find_all("script"):
+        content = script.string or ""
+        # The right script contains both tabSpec and itemTitle
+        if "tabSpec" not in content or "itemTitle" not in content:
+            continue
+
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            continue
+
+        if not isinstance(data, list):
+            continue
+
+        # Find the dict entry that has a "tabSpec" key
+        tab_spec_resolved = None
+        for item in data:
+            if isinstance(item, dict) and "tabSpec" in item:
+                tab_spec_resolved = _resolve(data, item["tabSpec"])
+                break
+
+        if not tab_spec_resolved or not isinstance(tab_spec_resolved, list):
+            continue
+
+        records: list[dict] = []
+        for model_entry in tab_spec_resolved:
+            if not isinstance(model_entry, dict):
+                continue
+
+            model_name = model_entry.get("title", "Unknown")
+            spec_items = model_entry.get("specItem", [])
+            if not isinstance(spec_items, list):
+                continue
+
+            for item in spec_items:
+                if not isinstance(item, dict):
+                    continue
+                key = item.get("itemTitle", "")
+                value_raw = item.get("itemContent", "")
+                value = _html_to_text(str(value_raw))
+                if key and value:
+                    records.append({
+                        "model": model_name,
+                        "category": _map_category(key),
+                        "key": key,
+                        "value": value,
+                    })
+
+        if records:
+            print(f"Parsed {len(records)} records from embedded JSON.")
+            return records
+
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Fallback parser: <ul class="spec-item-list"> HTML structure
+# (covers the single active model tab only)
+# ---------------------------------------------------------------------------
+
+def parse_specs_from_html(html: str) -> list[dict]:
+    """
+    Fallback: parse <li class='spec-title'> / <li class='spec-desc'> pairs.
+    Only the currently selected model tab is present in the rendered HTML.
     """
     soup = BeautifulSoup(html, "lxml")
     records: list[dict] = []
 
-    # --- Strategy 1: structured spec containers per SKU ---
-    for sku_code, sku_name in SKU_MAP.items():
-        container = soup.find(
-            attrs={"data-sku": re.compile(sku_code, re.I)}
-        ) or soup.find(
-            attrs={"data-model": re.compile(sku_code, re.I)}
-        )
+    # Try to detect which model is currently shown
+    active_model = "AORUS MASTER 16 AM6H"
+    for candidate in MODEL_TITLES:
+        if candidate in html:
+            active_model = candidate
+            break
 
-        if container:
-            _parse_container(container, sku_name, records)
-            continue
-
-        # --- Strategy 2: fallback — look for headings with SKU in text ---
-        heading = soup.find(
-            lambda tag: tag.name in ("h2", "h3", "h4", "div", "span")
-            and sku_code in tag.get_text()
-        )
-        if heading:
-            section = heading.find_parent(
-                lambda tag: tag.name in ("section", "div", "article")
-            )
-            if section:
-                _parse_container(section, sku_name, records)
-
-    # --- Strategy 3: global fallback — all spec tables / dl / ul on page ---
-    if not records:
-        records = _parse_global_fallback(soup)
-
-    return records
-
-
-def _parse_container(container, sku_name: str, records: list[dict]):
-    """Extract key-value pairs from a single SKU container."""
-    current_category = "General"
-
-    # Try <dl> first (definition list pattern)
-    dls = container.find_all("dl")
-    if dls:
-        for dl in dls:
-            dt_tags = dl.find_all("dt")
-            dd_tags = dl.find_all("dd")
-            for dt, dd in zip(dt_tags, dd_tags):
-                key = _normalize_whitespace(dt.get_text())
-                value = _normalize_whitespace(dd.get_text())
+    for ul in soup.find_all("ul", class_="spec-item-list"):
+        items = ul.find_all("li")
+        i = 0
+        while i + 1 < len(items):
+            title_li = items[i]
+            desc_li = items[i + 1]
+            if (
+                "spec-title" in (title_li.get("class") or [])
+                and "spec-desc" in (desc_li.get("class") or [])
+            ):
+                key = title_li.get_text(strip=True)
+                value = desc_li.get_text(separator=" ", strip=True)
+                value = re.sub(r"\s+", " ", value).strip()
                 if key and value:
-                    records.append(
-                        {
-                            "model": sku_name,
-                            "category": _map_category(key),
-                            "key": key,
-                            "value": value,
-                        }
-                    )
-        return
-
-    # Try <tr> (table rows)
-    rows = container.find_all("tr")
-    if rows:
-        for row in rows:
-            th = row.find("th")
-            td = row.find("td")
-            if th and td:
-                key = _normalize_whitespace(th.get_text())
-                value = _normalize_whitespace(td.get_text())
-                if key and value:
-                    records.append(
-                        {
-                            "model": sku_name,
-                            "category": _map_category(key),
-                            "key": key,
-                            "value": value,
-                        }
-                    )
-        return
-
-    # Try alternating <li> pattern (key/value in sibling li elements)
-    items = container.find_all("li")
-    i = 0
-    while i < len(items) - 1:
-        key = _normalize_whitespace(items[i].get_text())
-        value = _normalize_whitespace(items[i + 1].get_text())
-        # Heuristic: key is short (< 30 chars), value can be longer
-        if key and value and len(key) < 40 and len(value) > 0:
-            records.append(
-                {
-                    "model": sku_name,
-                    "category": _map_category(key),
-                    "key": key,
-                    "value": value,
-                }
-            )
-            i += 2
-        else:
-            i += 1
-
-
-def _parse_global_fallback(soup: BeautifulSoup) -> list[dict]:
-    """Last-resort: collect every table row across the page."""
-    records = []
-    for row in soup.find_all("tr"):
-        cells = row.find_all(["td", "th"])
-        if len(cells) >= 2:
-            key = _normalize_whitespace(cells[0].get_text())
-            value = _normalize_whitespace(" ".join(c.get_text() for c in cells[1:]))
-            if key and value:
-                records.append(
-                    {
-                        "model": "AORUS MASTER 16 AM6H",
+                    records.append({
+                        "model": active_model,
                         "category": _map_category(key),
                         "key": key,
                         "value": value,
-                    }
-                )
+                    })
+                i += 2
+            else:
+                i += 1
+
+    if records:
+        print(f"Parsed {len(records)} records from HTML spec-item-list "
+              f"(active model only).")
     return records
 
 
-def _map_category(key: str) -> str:
-    for keyword, group in CATEGORY_GROUPS.items():
-        if keyword in key:
-            return group
-    return "General"
+# ---------------------------------------------------------------------------
+# Public entry point
+# ---------------------------------------------------------------------------
+
+def parse_specs(html: str) -> list[dict]:
+    """Try JSON parsing first; fall back to HTML parsing."""
+    records = parse_specs_from_json(html)
+    if records:
+        return records
+
+    print("JSON parsing yielded no records, trying HTML fallback ...",
+          file=sys.stderr)
+    return parse_specs_from_html(html)
 
 
 def save_specs(records: list[dict], out_path: Path):
@@ -253,54 +278,24 @@ def save_specs(records: list[dict], out_path: Path):
     print(f"Saved {len(records)} records → {out_path}")
 
 
-LOCAL_HTML_PATH = Path("data/spec_page.html")
-
-
-def load_or_fetch_html() -> str:
-    """
-    Load HTML from a local file if present, otherwise fetch from the URL.
-
-    Local file takes priority so that:
-    - Cloud environments (Colab) blocked by 403 can still work
-    - The user can save the page from their browser and upload it
-
-    To use a local file:
-      1. Open https://www.gigabyte.com/tw/Laptop/AORUS-MASTER-16-AM6H/sp in a browser
-      2. Wait for the page to fully load (specs visible)
-      3. Ctrl+S → save as "Webpage, HTML Only" (.html)
-      4. Place / upload the file at  data/spec_page.html
-    """
-    if LOCAL_HTML_PATH.exists():
-        print(f"Loading local HTML: {LOCAL_HTML_PATH}")
-        return LOCAL_HTML_PATH.read_text(encoding="utf-8", errors="replace")
-
-    print(f"Fetching {SPEC_URL} ...")
-    try:
-        return fetch_html(SPEC_URL)
-    except Exception as e:
-        raise RuntimeError(
-            f"Failed to fetch {SPEC_URL}: {e}\n\n"
-            "If you are on a cloud environment (e.g. Colab), the IP may be blocked.\n"
-            "Solution:\n"
-            "  1. Open the URL in your browser\n"
-            "  2. Wait for specs to load, then Ctrl+S → save as HTML only\n"
-            f"  3. Upload the file to: {LOCAL_HTML_PATH}\n"
-            "  4. Re-run this script"
-        ) from e
-
-
 def main():
     out_path = Path("data/specs.json")
     html = load_or_fetch_html()
     records = parse_specs(html)
 
     if not records:
-        print("WARNING: No records parsed. Check the page structure.", file=sys.stderr)
+        print("ERROR: No records parsed.", file=sys.stderr)
+        print("Possible causes:", file=sys.stderr)
+        print("  1. The saved HTML is incomplete (page not fully loaded before saving)", file=sys.stderr)
+        print("  2. GIGABYTE updated the page structure", file=sys.stderr)
         sys.exit(1)
 
     save_specs(records, out_path)
+    models_found = sorted({r["model"] for r in records})
+    print(f"\nModels: {models_found}")
+    print(f"\nSample (first 3 records):")
     for r in records[:3]:
-        print(r)
+        print(f"  [{r['model']}] {r['key']}: {r['value'][:80]}")
 
 
 if __name__ == "__main__":
