@@ -5,6 +5,16 @@
 
 ---
 
+## 給主管快速理解（1 分鐘）
+
+- **專案目的**：把 GIGABYTE 官方規格頁轉成可檢索知識庫，提供可追溯的產品問答。
+- **技術重點**：採用 Hybrid Retrieval（Embedding + BM25）降低專有名詞漏召回風險。
+- **可靠性**：支援離線 HTML 載入，不依賴即時爬網，降低 Demo 當場失敗機率。
+- **可量化指標**：`Recall@k`、`Keyword Hit Rate`、`TTFT`、`TPS` 皆可重現評測。
+- **交付形式**：CLI 問答、benchmark 報告（`data/benchmark_results.json`）、可讀文件。
+
+---
+
 ## 系統需求
 
 | 項目 | 需求 |
@@ -127,8 +137,8 @@ Embedding Model (CPU)                  ≈ 93 MB RAM
 [Embedding]  BAAI/bge-small-zh-v1.5 (CPU)
     │         QUERY_PREFIX + query → 512-dim vector
     ▼
-[Retrieval]  Cosine similarity (numpy brute-force)
-    │         Top-3 chunks from ~20 semantic chunks
+[Retrieval]  Hybrid Search = Embedding + BM25
+    │         Top-k chunks from row/category/comparison multi-granularity chunks
     ▼
 [Generation] Qwen2.5-3B-Instruct-Q4_K_M (llama-cpp-python)
     │         Streaming output with TTFT / TPS metrics
@@ -204,9 +214,17 @@ uv run eval --top-k 3 --max-tokens 256 --output data/benchmark_results.json
   "question": "AM6H-BZH 的顯卡與 VRAM 是什麼？",
   "expected_keywords": ["RTX 5090", "24GB", "GDDR7"],
   "expected_category": "GPU",
-  "expected_model": "AORUS MASTER 16 AM6H-BZH"
+  "expected_model": "BZH"
 }
 ```
+
+---
+
+## 目前限制與已知風險
+
+- 規格頁可能有地區封鎖（403）；建議使用本地 `data/spec_page.html` 確保流程穩定。
+- 推理型問題（例如「是否適合某用途」）屬半開放題，適合人工複核，不建議作為唯一自動化指標。
+- benchmark 的自動評分以關鍵字為主，仍需搭配抽樣人工檢查敘述正確性。
 
 ---
 

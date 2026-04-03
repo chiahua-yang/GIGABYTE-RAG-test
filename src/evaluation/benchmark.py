@@ -14,6 +14,7 @@ Usage:
 import argparse
 import json
 import time
+import re
 from pathlib import Path
 
 from sentence_transformers import SentenceTransformer
@@ -30,7 +31,7 @@ GROUND_TRUTH: list[dict] = [
         "id": "L1-01",
         "level": "direct",
         "question": "這台筆電的 CPU 是什麼型號？",
-        "expected_keywords": ["AMD Ryzen", "AI", "HX"],
+        "expected_keywords": ["Intel", "Ultra", "275HX"],
         "expected_model": None,
         "expected_category": "CPU",
     },
@@ -96,7 +97,7 @@ GROUND_TRUTH: list[dict] = [
         "level": "model_specific",
         "question": "AM6H-BZH 的顯卡是什麼？VRAM 有多少？",
         "expected_keywords": ["RTX 5090", "24GB", "GDDR7"],
-        "expected_model": "AORUS MASTER 16 AM6H-BZH",
+        "expected_model": "BZH",
         "expected_category": "GPU",
     },
     {
@@ -104,7 +105,7 @@ GROUND_TRUTH: list[dict] = [
         "level": "model_specific",
         "question": "BYH 型號的 GPU TGP 是多少瓦？",
         "expected_keywords": ["175W", "5080"],
-        "expected_model": "AORUS MASTER 16 AM6H-BYH",
+        "expected_model": "BYH",
         "expected_category": "GPU",
     },
     {
@@ -112,7 +113,7 @@ GROUND_TRUTH: list[dict] = [
         "level": "model_specific",
         "question": "BXH 的顯示晶片 AI Boost 頻率是多少？",
         "expected_keywords": ["BXH", "1962", "MHz", "5070"],
-        "expected_model": "AORUS MASTER 16 AM6H-BXH",
+        "expected_model": "BXH",
         "expected_category": "GPU",
     },
     {
@@ -120,7 +121,7 @@ GROUND_TRUTH: list[dict] = [
         "level": "model_specific",
         "question": "What GPU does the AM6H-BYH have?",
         "expected_keywords": ["RTX 5080", "16GB"],
-        "expected_model": "AORUS MASTER 16 AM6H-BYH",
+        "expected_model": "BYH",
         "expected_category": "GPU",
     },
     # ── Level 3: Cross-model comparison ─────────────────────────────────────
@@ -192,13 +193,28 @@ GROUND_TRUTH: list[dict] = [
 ]
 
 
+def _normalize_model_alias(text: str) -> str:
+    """
+    Normalize model string to a short alias for robust matching:
+    e.g. "AORUS MASTER 16 BZH" and "AM6H-BZH" -> "BZH"
+    """
+    upper = text.upper()
+    match = re.search(r"(BZH|BYH|BXH)", upper)
+    if match:
+        return match.group(1)
+    # Fallback: collapse non-alnum chars
+    return re.sub(r"[^A-Z0-9]+", "", upper)
+
+
 def recall_at_k(question_id: str, retrieved_chunks: list[dict], expected_category: str, expected_model: str | None) -> bool:
     """Check if the expected chunk is within retrieved top-k."""
+    expected_alias = _normalize_model_alias(expected_model) if expected_model else None
     for chunk in retrieved_chunks:
         if chunk["category"] == expected_category:
             if expected_model is None:
                 return True
-            if expected_model and expected_model in chunk.get("model", ""):
+            chunk_alias = _normalize_model_alias(chunk.get("model", ""))
+            if expected_alias and expected_alias == chunk_alias:
                 return True
             if chunk.get("model") == "comparison":
                 return True
