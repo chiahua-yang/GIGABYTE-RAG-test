@@ -8,6 +8,8 @@ Chunking strategy:
 """
 
 import json
+import hashlib
+import re
 from pathlib import Path
 from collections import defaultdict
 
@@ -60,6 +62,16 @@ def load_specs(path: Path) -> list[dict]:
         return json.load(f)
 
 
+def _slug(text: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "-", text.lower())
+    return cleaned.strip("-") or "field"
+
+
+def _source_signature(records: list[dict]) -> str:
+    canonical = json.dumps(records, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12]
+
+
 def build_chunks(records: list[dict]) -> list[dict]:
     """
     Group records by (model, category) → one chunk per group per model.
@@ -73,12 +85,37 @@ def build_chunks(records: list[dict]) -> list[dict]:
         grouped[r["model"]][r["category"]].append((r["key"], r["value"]))
 
     chunks: list[dict] = []
+    source_sig = _source_signature(records)
 
     all_categories = set()
     for model_data in grouped.values():
         all_categories.update(model_data.keys())
 
-    # Per-model chunks
+    # Per-record row chunks (fine-grained)
+    for r in records:
+        model = r["model"]
+        category = r["category"]
+        key = r["key"]
+        value = r["value"]
+        label = CATEGORY_LABEL.get(category, category)
+        row_id = f"{model}::{category}::{_slug(key)}"
+        text = (
+            f"[{model}] {label}\n"
+            f"欄位 / Field: {key}\n"
+            f"值 / Value: {value}"
+        )
+        chunks.append(
+            {
+                "id": row_id,
+                "model": model,
+                "category": category,
+                "chunk_type": "row",
+                "source_signature": source_sig,
+                "text": text,
+            }
+        )
+
+    # Per-model category chunks (coarser context)
     for model, cat_map in grouped.items():
         for category in GROUP_ORDER:
             if category not in cat_map:
@@ -92,6 +129,8 @@ def build_chunks(records: list[dict]) -> list[dict]:
                     "id": f"{model}::{category}",
                     "model": model,
                     "category": category,
+                    "chunk_type": "category",
+                    "source_signature": source_sig,
                     "text": text,
                 }
             )
@@ -123,6 +162,8 @@ def build_chunks(records: list[dict]) -> list[dict]:
                 "id": f"comparison::{category}",
                 "model": "comparison",
                 "category": category,
+                "chunk_type": "comparison",
+                "source_signature": source_sig,
                 "text": text,
             }
         )

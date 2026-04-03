@@ -118,11 +118,17 @@ def build_index(chunks: list[dict], model_name: str = EMBED_MODEL) -> dict:
     print("Building BM25 index …")
     bm25 = BM25(texts)
 
+    signatures = {c.get("source_signature") for c in chunks if c.get("source_signature")}
+    source_signature = next(iter(signatures)) if len(signatures) == 1 else None
+    if len(signatures) > 1:
+        print("Warning: chunks contain mixed source signatures.")
+
     return {
         "chunks": chunks,
         "embeddings": embeddings,
         "bm25": bm25,
         "model": model_name,
+        "source_signature": source_signature,
     }
 
 
@@ -141,7 +147,49 @@ def load_index(path: Path = INDEX_PATH) -> dict:
     if not hasattr(main, "BM25"):
         main.BM25 = BM25
     with open(path, "rb") as f:
-        return pickle.load(f)
+        index = pickle.load(f)
+
+    chunk_sigs = {
+        c.get("source_signature")
+        for c in index.get("chunks", [])
+        if c.get("source_signature")
+    }
+    index_sig = index.get("source_signature")
+    if index_sig and chunk_sigs and index_sig not in chunk_sigs:
+        print("Warning: index source signature does not match chunk signatures.")
+    return index
+
+
+def describe_index(index: dict) -> dict:
+    """
+    Return lightweight diagnostics for pipeline consistency checks.
+    """
+    chunks = index.get("chunks", [])
+    type_counts: dict[str, int] = {}
+    for c in chunks:
+        chunk_type = c.get("chunk_type", "legacy")
+        type_counts[chunk_type] = type_counts.get(chunk_type, 0) + 1
+    signatures = sorted(
+        {
+            c.get("source_signature")
+            for c in chunks
+            if c.get("source_signature")
+        }
+    )
+    return {
+        "total_chunks": len(chunks),
+        "chunk_type_counts": type_counts,
+        "index_source_signature": index.get("source_signature"),
+        "chunk_source_signatures": signatures,
+        "is_consistent": (
+            len(signatures) <= 1
+            and (
+                not index.get("source_signature")
+                or not signatures
+                or index.get("source_signature") in signatures
+            )
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
