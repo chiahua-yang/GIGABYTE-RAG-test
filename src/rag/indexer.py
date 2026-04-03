@@ -128,17 +128,15 @@ def save_index(index: dict, path: Path):
     print(f"Index saved → {path}  ({len(index['chunks'])} chunks)")
 
 
-class _FixedUnpickler(pickle.Unpickler):
-    """Redirect BM25 class regardless of which module pickle recorded it under."""
-    def find_class(self, module, name):
-        if name == "BM25":
-            return BM25
-        return super().find_class(module, name)
-
-
 def load_index(path: Path = INDEX_PATH) -> dict:
+    import sys
+    # pickle may have stored BM25 as __main__.BM25 (when built inside a notebook);
+    # inject it into __main__ so deserialization succeeds without rebuilding.
+    main = sys.modules.setdefault("__main__", sys.modules[__name__])
+    if not hasattr(main, "BM25"):
+        main.BM25 = BM25
     with open(path, "rb") as f:
-        return _FixedUnpickler(f).load()
+        return pickle.load(f)
 
 
 # ---------------------------------------------------------------------------
