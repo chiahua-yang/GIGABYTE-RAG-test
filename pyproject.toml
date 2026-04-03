@@ -21,6 +21,7 @@ playwright = ["playwright>=1.44.0"]
 [project.scripts]
 # Data pipeline
 scrape = "src.data.scraper:main"
+chunk  = "src.data.chunker:main"
 index  = "src.rag.indexer:main"
 
 # Online inference
